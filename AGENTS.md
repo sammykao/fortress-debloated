@@ -1,4 +1,12 @@
-# Set up Fortress v3
+# Fortress Debloated agent guide
+
+This fork adds a bounded search API. Read [README.md](README.md) and
+[docs/SEARCH_RUNTIME.md](docs/SEARCH_RUNTIME.md) before you change or deploy it.
+The guide below describes the upstream standalone Fortress install. It does not
+describe this fork's search container. A repository scan does not need a license.
+Live v3 browser tests do need a license, which must stay outside the repository.
+
+# Set up Fortress v3 (upstream guide)
 
 This file is self-contained: it is the only file a fresh sandbox needs.
 Do not fetch another guide or assume a helper script, cache, engine, or license
