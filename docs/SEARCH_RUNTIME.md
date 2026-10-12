@@ -121,3 +121,19 @@ The Worker also provides an authenticated `/probe-ip` route for this test. It ru
 | Third 30 queries | 30/30 | 78.2 seconds | 12 |
 
 The first batch had 23 failures. At least one was HTTP 429 with a provider throttle error. The first test harness recorded the first failure, so it did not preserve a full status breakdown for that batch. The later batches each returned 30 HTTP 200 responses with nonempty results. Cloudflare did not expose a memory peak in these checks. Completion shows the process ran under the 1 GiB limit. Cloudflare reported the Container inactive before the second batch. A later health request took 7.0 seconds after Cloudflare again reported it inactive. These results do not establish a sustained search rate or a stable IP guarantee.
+
+### Cloudflare test on 2026-10-12
+
+We tested the same Worker and one `basic` Container. The first health request after overnight inactivity took 20.3 seconds. Thirty simultaneous IP probes then returned one address. All searches used varied public queries.
+
+| Search burst | Valid results | Other responses | Elapsed time | Peak active pages |
+| --- | ---: | --- | ---: | ---: |
+| 20 requests | 20/20 | None | 65.3 seconds | 12 |
+| 100 requests | 24/100 | 76 HTTP 504 | 97.9 seconds | 12 |
+| 5 requests after the 100 burst | 5/5 | None | 14.3 seconds | 5 |
+| 30 requests after the 100 burst | 30/30 | None | 88.1 seconds | 12 |
+| 1 request after idle restart | 1/1 | None | 5.2 seconds | 1 |
+
+The API returned no HTTP 429 in these runs. Its 90-second deadline includes time waiting for one of 12 browser page slots. The 100-request burst exceeded that deadline for 76 requests. This result is consistent with queue pressure in one quarter-vCPU Container. It does not prove where each request spent its time. The follow-up searches show that the provider still served results after the burst.
+
+Thirty IP probes after the 100-request burst returned the same address as the 30 probes before it. Cloudflare reported the Container inactive after its 60-second idle period. A probe restarted it in 11.2 seconds and reported the same address. The IP echo service does not show which address DuckDuckGo saw. One restart does not guarantee that future Containers use the same address.
