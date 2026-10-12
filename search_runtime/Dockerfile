@@ -1,11 +1,17 @@
 # syntax=docker/dockerfile:1
 FROM python:3.12-slim-bookworm AS bundle
+ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends binutils ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
-RUN curl -fL --retry 3 -o /tmp/fortress.tar.gz \
-      https://github.com/tiliondev/fortress/releases/download/v153.0.8010.36/fortress-v153-linux-arm64.tar.gz \
-    && echo '5213d291e6e883ece6d9509fa39be1ae0a7e188592ef87318693e705be994728  /tmp/fortress.tar.gz' | sha256sum -c - \
+RUN case "$TARGETARCH" in \
+      amd64) archive=x64; checksum=f677f850e64a75f4c202955649df074629306231feb4a2fa9bab0b9bbddafb6a ;; \
+      arm64) archive=arm64; checksum=5213d291e6e883ece6d9509fa39be1ae0a7e188592ef87318693e705be994728 ;; \
+      *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fL --retry 3 -o /tmp/fortress.tar.gz \
+      "https://github.com/tiliondev/fortress/releases/download/v153.0.8010.36/fortress-v153-linux-${archive}.tar.gz" \
+    && echo "$checksum  /tmp/fortress.tar.gz" | sha256sum -c - \
     && mkdir /bundle \
     && tar -xzf /tmp/fortress.tar.gz -C /bundle --strip-components=1 \
     && strip --strip-unneeded /bundle/chrome /bundle/chrome_crashpad_handler \
@@ -22,8 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir aiohttp==3.13.3 playwright==1.63.0
 RUN useradd -m -u 10001 search
 COPY --from=bundle --chown=search:search /bundle /opt/fortress
-COPY --chown=search:search search_runtime/server.py /app/server.py
-COPY --chown=search:search search_runtime/providers.py /app/providers.py
+COPY --chown=search:search server.py /app/server.py
+COPY --chown=search:search providers.py /app/providers.py
 USER search
 ENV HOME=/home/search TILION_NO_ACTIVATE=1 PYTHONUNBUFFERED=1
 WORKDIR /app

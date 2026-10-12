@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 
 const fixture = process.argv.includes('--fixture');
 
@@ -17,10 +18,14 @@ if (fixture) {
   const publicRun = process.argv.includes('--public');
   const offset = Number(process.env.QUERY_OFFSET || 0);
   const api = process.env.SEARCH_API || 'http://127.0.0.1:18080';
+  const headers = { 'content-type': 'application/json' };
+  const token = process.env.SEARCH_TOKEN_FILE &&
+    readFileSync(process.env.SEARCH_TOKEN_FILE, 'utf8').trim();
+  if (token) headers.authorization = `Bearer ${token}`;
   let peak = 0;
   const sample = setInterval(async () => {
     try {
-      const health = await (await fetch(`${api}/healthz`)).json();
+      const health = await (await fetch(`${api}/healthz`, { headers })).json();
       peak = Math.max(peak, health.active);
     } catch {}
   }, 100);
@@ -38,20 +43,27 @@ if (fixture) {
     const query = publicRun
       ? `${subjects[index % subjects.length]} ${intents[Math.floor(index / subjects.length) % intents.length]}`
       : `fortress load ${i}`;
-    const response = await fetch(`${api}/search`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query, count: 1 }),
-    });
-    const body = await response.json();
-    return { status: response.status, query, body };
+    try {
+      const response = await fetch(`${api}/search`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ query, count: 1 }),
+        signal: AbortSignal.timeout(150000),
+      });
+      const body = await response.json();
+      return { status: response.status, query, body };
+    } catch (error) {
+      return { status: 0, query, body: { error: error.message } };
+    }
   })).finally(() => clearInterval(sample));
   const failures = responses.filter(({ status, query, body }) =>
     status !== 200 || body.query !== query || body.count !== 1 ||
     (publicRun ? !body.results?.[0]?.title ||
       !body.results[0].url?.startsWith('http') || body.results[0].rank !== 1 :
       body.results?.[0]?.url !== `https://example.test/?q=${encodeURIComponent(query)}`));
-  console.log(JSON.stringify({ requests: count, failures: failures.length,
+  const statuses = {};
+  for (const { status } of responses) statuses[status] = (statuses[status] || 0) + 1;
+  console.log(JSON.stringify({ requests: count, failures: failures.length, statuses,
     peakActive: peak, elapsedMs: Date.now() - started, sample: failures[0] }));
   if (failures.length) process.exitCode = 1;
 }

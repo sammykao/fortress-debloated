@@ -2,7 +2,7 @@
 
 This fork runs a search API on the released Fortress browser. It uses one browser process and at most 12 active search pages per container. The API accepts up to 128 requests at once. Requests within that limit wait for a browser slot. Agents receive titles, direct URLs, and snippets.
 
-The image uses the official Fortress v153.0.8010.36 Linux ARM64 release. It verifies the archive hash during the build. It removes unused locale packs, Qt shims, the activator, and build tools from the runtime image. It keeps the native browser, launcher, fonts, and SwiftShader files that the browser needs.
+The image uses the official Fortress v153.0.8010.36 Linux ARM64 or AMD64 release for the target platform. It verifies the archive hash during the build. It removes unused locale packs, Qt shims, the activator, and build tools from the runtime image. It keeps the native browser, launcher, fonts, and SwiftShader files that the browser needs.
 
 **Source limit:** The public patches in this fork are an older demonstration set. The current v3 persona generator and some engine changes exist only in the [released binary](https://github.com/tiliondev/fortress/releases/tag/v153.0.8010.36). This image repackages that binary. It does not rebuild v3 from source or replace Chromium with an HTTP client.
 
@@ -22,13 +22,21 @@ These runs used Docker Desktop on an ARM64 Mac on 2026-10-11. The container had 
 
 The public runs used varied queries. Earlier runs that repeated one query pattern triggered DuckDuckGo HTTP 202 and 403 responses. Another trial returned an empty HTTP 200 page for one query. The API returns HTTP 429 and pauses new provider work for 60 seconds after a throttle response. These results show local burst capacity. They do not establish a production service level for DuckDuckGo or a cloud host.
 
+## Cloudflare test
+
+On 2026-10-11, a Cloudflare Worker routed requests to one `basic` Container with 1 GiB RAM and one-quarter vCPU. The first 30 simultaneous public searches returned 7 valid results and 23 failures in 27.6 seconds. At least one failure was HTTP 429 after DuckDuckGo throttled. Two later batches of 30 varied searches returned 30/30 valid results in 75.0 and 78.2 seconds. The browser reached 12 active pages. These runs show that the result depends on provider behavior and that one-quarter vCPU adds substantial latency.
+
+Thirty simultaneous IP checks from that Container reported one public IP. The checks used an IP echo service. They cannot prove which IP DuckDuckGo saw for every connection. Cloudflare may assign a different outbound IP when the Container restarts. The Container stops after 60 seconds of inactivity, so it has no idle browser process. The next request starts Fortress again. One health request took 7.0 seconds after Cloudflare reported the Container inactive. See [the test method and limits](docs/SEARCH_RUNTIME.md#cloudflare-test).
+
 ## Build and run
 
-Build on ARM64:
+Build for your platform:
 
 ```sh
-docker build --platform linux/arm64 -f search_runtime/Dockerfile -t fortress-search:dev .
+docker build --platform linux/arm64 -f search_runtime/Dockerfile -t fortress-search:dev search_runtime
 ```
+
+Use `--platform linux/amd64` for Cloudflare Containers.
 
 Inject `TILION_LICENSE_KEY` from your secret manager. The browser checks this key when it starts. The API stops if the key is absent or the browser reports v1 fallback. You can also mount a nonempty key file at `/home/search/.tilion/license.jwt`. Keep the key outside the repository. Review the [Fortress license](LICENSE) and [subscription terms](SUBSCRIPTION-TERMS.md) before production use.
 

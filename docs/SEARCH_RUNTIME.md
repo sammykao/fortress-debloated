@@ -6,7 +6,7 @@ The runtime gives agents one JSON search operation. It starts one Fortress proce
 
 The default provider is DuckDuckGo's HTML results page. [The typed provider manifest](../search_runtime/providers.py) holds its URL, result selector, and extraction code. `SEARCH_URL` replaces the URL for the local load fixture. The same parser still applies.
 
-Fortress v3 lives in the released executable. The [public patch set](../patches/README.md) cannot recreate it. The Dockerfile downloads the ARM64 v153.0.8010.36 archive and checks SHA-256 `5213d291e6e883ece6d9509fa39be1ae0a7e188592ef87318693e705be994728`. The build stops on a mismatch.
+Fortress v3 lives in the released executable. The [public patch set](../patches/README.md) cannot recreate it. The Dockerfile downloads the v153.0.8010.36 archive for the target architecture. It checks SHA-256 `5213d291e6e883ece6d9509fa39be1ae0a7e188592ef87318693e705be994728` for ARM64 and `f677f850e64a75f4c202955649df074629306231feb4a2fa9bab0b9bbddafb6a` for AMD64. The build stops on a mismatch.
 
 ## Files in the image
 
@@ -56,4 +56,26 @@ Run the fixture with `node search_runtime/load_test.mjs --fixture` on the host. 
 
 Two 101-query public runs passed with varied queries. Earlier runs that repeated one query pattern triggered DuckDuckGo HTTP 202 and 403 responses. Another trial returned an empty HTTP 200 page for one query. The browser and API cannot control an external provider's IP limits. A production deployment needs an approved egress plan and a measured provider service level. Container memory can change with target pages, architecture, and browser release.
 
-We pinned and tested only the ARM64 image on Docker Desktop. Run the same tests on the cloud instance type before you set production capacity. Keep CDP private, pass the key through a secret manager, and set memory and CPU limits per replica. Horizontal replicas need separate browser processes and profiles.
+We tested ARM64 on Docker Desktop and AMD64 in a Cloudflare Container. Repeat load checks on each cloud instance type before you set production capacity. Keep CDP private, pass the key through a secret manager, and set memory and CPU limits per replica. Horizontal replicas need separate browser processes and profiles.
+
+## Cloudflare test
+
+[The Cloudflare Worker](../search_runtime/cloudflare-worker.mjs) routes every request to one named Container. [Its config](../wrangler.fortress.jsonc) uses the `basic` instance type: 1 GiB RAM, one-quarter vCPU, and one maximum instance. Cloudflare's `default` scheduling policy is necessary because its Durable Object scheduling policy [does not accept `basic`](https://developers.cloudflare.com/containers/configuration/scheduling-policy/#choose-an-instance-size-at-runtime). The Worker checks a bearer token. It passes the Fortress key from a Worker secret when it starts the Container. The Container stops after 60 seconds without activity.
+
+Deploy the Worker with Wrangler, then set `TILION_LICENSE_KEY` and `SEARCH_TEST_TOKEN` as Worker secrets. Keep both values out of the image and repository. The test account used Wrangler 4.135.0. Run the 30-query check with `SEARCH_API` set to the deployed Worker URL and `SEARCH_TOKEN_FILE` set to a local file containing the bearer token:
+
+```sh
+SEARCH_API=https://YOUR-WORKER.workers.dev \
+SEARCH_TOKEN_FILE=/path/to/test-token \
+node search_runtime/load_test.mjs 30 --public
+```
+
+The Worker also provides an authenticated `/probe-ip` route for this test. It runs `curl https://api.ipify.org` inside the Container and returns the observed IP. Thirty simultaneous probes returned HTTP 200 with one IP. A later probe burst returned no usable IP readings immediately after a search load. A retry returned 30/30 HTTP 200 with one IP. An IP echo service checks the Container's outbound path to that service. It cannot prove the address DuckDuckGo saw, and a new Container placement may change the address.
+
+| Public search batch | Valid results | Elapsed time | Peak active pages |
+| --- | ---: | ---: | ---: |
+| First 30 queries | 7/30 | 27.6 seconds | 12 |
+| Second 30 queries | 30/30 | 75.0 seconds | 12 |
+| Third 30 queries | 30/30 | 78.2 seconds | 12 |
+
+The first batch had 23 failures. At least one was HTTP 429 with a provider throttle error. The first test harness recorded the first failure, so it did not preserve a full status breakdown for that batch. The later batches each returned 30 HTTP 200 responses with nonempty results. Cloudflare did not expose a memory peak in these checks. Completion shows the process ran under the 1 GiB limit. Cloudflare reported the Container inactive before the second batch. A later health request took 7.0 seconds after Cloudflare again reported it inactive. These results do not establish a sustained search rate or a stable IP guarantee.

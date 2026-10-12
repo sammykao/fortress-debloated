@@ -1,0 +1,20 @@
+{
+  "name": "fortress-search-basic-test",
+  "main": "search_runtime/cloudflare-worker.mjs",
+  "compatibility_date": "2026-10-11",
+  "observability": { "enabled": true },
+  "containers": [
+    {
+      "class_name": "FortressSearchBasic",
+      "image": "./search_runtime/Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "FORTRESS_SEARCH", "class_name": "FortressSearchBasic" }
+    ]
+  },
+  "exports": { "FortressSearchBasic": { "type": "durable-object", "storage": "sqlite" } }
+}
