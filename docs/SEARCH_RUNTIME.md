@@ -58,6 +58,48 @@ Two 101-query public runs passed with varied queries. Earlier runs that repeated
 
 We tested ARM64 on Docker Desktop and AMD64 in a Cloudflare Container. Repeat load checks on each cloud instance type before you set production capacity. Keep CDP private, pass the key through a secret manager, and set memory and CPU limits per replica. Horizontal replicas need separate browser processes and profiles.
 
+## AWS Lambda
+
+[The Lambda image](../search_runtime/Dockerfile.lambda) reuses the search server and adds the [AWS Lambda Web Adapter](https://github.com/aws/aws-lambda-web-adapter). The adapter passes Function URL or API Gateway HTTP requests to port 8081. It checks `/healthz` before it accepts a request. The browser profile and home directory use `/tmp` because [Lambda makes the image filesystem read-only](https://docs.aws.amazon.com/lambda/latest/dg/images-create.html). The Lambda image sets `FORTRESS_NO_SANDBOX=1` for Chromium compatibility. This removes Chromium's own process sandbox inside the Lambda environment. The normal container keeps that sandbox and uses port 8080.
+
+Build both images for the same architecture. This example uses ARM64:
+
+```sh
+docker build --platform linux/arm64 -f search_runtime/Dockerfile -t fortress-search:dev search_runtime
+docker build --platform linux/arm64 --provenance=false --sbom=false -f search_runtime/Dockerfile.lambda -t fortress-search:lambda search_runtime
+```
+
+Push `fortress-search:lambda` to an Amazon ECR repository in the target AWS Region. Create an image-based Lambda function with ARM64 architecture, 1,024 MB memory, the default 512 MB of `/tmp` storage, and a 120-second timeout. Set `TILION_LICENSE_KEY` in the function environment through a secret deployment process. The server checks the key when it starts. Keep the key out of the image, repository, and shell history. Create a [Function URL with `AWS_IAM` authentication](https://docs.aws.amazon.com/lambda/latest/dg/urls-auth.html) or use an authenticated API Gateway. The HTTP operation remains `POST /search` with the JSON body described in the README. Direct `InvokeFunction` calls with a raw `{ "query": "..." }` payload are not supported by this HTTP image.
+
+Use an existing ECR repository and Lambda execution role. Log in to ECR before the push. Set `FORTRESS_ECR_IMAGE_URI` to the ECR image tag. Set `FORTRESS_LAMBDA_ROLE_ARN` to the role ARN and `FORTRESS_AWS_REGION` to the target Region. Then deploy the image:
+
+```sh
+docker tag fortress-search:lambda "$FORTRESS_ECR_IMAGE_URI"
+docker push "$FORTRESS_ECR_IMAGE_URI"
+aws lambda create-function \
+  --region "$FORTRESS_AWS_REGION" \
+  --function-name fortress-search \
+  --package-type Image \
+  --code "ImageUri=$FORTRESS_ECR_IMAGE_URI" \
+  --role "$FORTRESS_LAMBDA_ROLE_ARN" \
+  --architectures arm64 \
+  --memory-size 1024 \
+  --timeout 120
+aws lambda wait function-active-v2 \
+  --region "$FORTRESS_AWS_REGION" \
+  --function-name fortress-search
+aws lambda create-function-url-config \
+  --region "$FORTRESS_AWS_REGION" \
+  --function-name fortress-search \
+  --auth-type AWS_IAM
+```
+
+Configure `TILION_LICENSE_KEY` before the first invocation. Sign Function URL requests with AWS Signature Version 4. The caller needs both `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` permission. Increase `/tmp` storage only if measured profile usage requires it.
+
+We tested the ARM64 image with the [AWS Lambda runtime interface emulator](https://github.com/aws/aws-lambda-runtime-interface-emulator) on Docker Desktop. The container used a read-only image filesystem, a 512 MB `/tmp` filesystem, a 1 GiB memory limit, and Docker's default seccomp profile. A live public search returned HTTP 200 and two results. The first invocation took 2.8 seconds. A warm invocation took 0.6 seconds. Docker reported 364 MiB at one sample after the first call. `docker image inspect` reports 332 MB for the Lambda image and 330 MB for the base image. These measurements are local. The emulator does not reproduce AWS placement, network, IAM, or scaling.
+
+[Standard Lambda creates a separate execution environment for each concurrent request](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html). One hundred concurrent searches can start about one hundred browsers. The 12-page limit applies within each environment, but standard Lambda sends one invocation to each environment at a time. This deployment does not guarantee one outbound IP. The search provider can still throttle requests across environments.
+
 ## Cloudflare test
 
 [The Cloudflare Worker](../search_runtime/cloudflare-worker.mjs) routes every request to one named Container. [Its config](../wrangler.fortress.jsonc) uses the `basic` instance type: 1 GiB RAM, one-quarter vCPU, and one maximum instance. Cloudflare's `default` scheduling policy is necessary because its Durable Object scheduling policy [does not accept `basic`](https://developers.cloudflare.com/containers/configuration/scheduling-policy/#choose-an-instance-size-at-runtime). The Worker checks a bearer token. It passes the Fortress key from a Worker secret when it starts the Container. The Container stops after 60 seconds without activity.

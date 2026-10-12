@@ -28,6 +28,19 @@ On 2026-10-11, a Cloudflare Worker routed requests to one `basic` Container with
 
 Thirty simultaneous IP checks from that Container reported one public IP. The checks used an IP echo service. They cannot prove which IP DuckDuckGo saw for every connection. Cloudflare may assign a different outbound IP when the Container restarts. The Container stops after 60 seconds of inactivity, so it has no idle browser process. The next request starts Fortress again. One health request took 7.0 seconds after Cloudflare reported the Container inactive. See [the test method and limits](docs/SEARCH_RUNTIME.md#cloudflare-test).
 
+## AWS Lambda
+
+Lambda can run the same Fortress search API from an ARM64 or AMD64 container image. [The Lambda Dockerfile](search_runtime/Dockerfile.lambda) adds the AWS Lambda Web Adapter to the existing image. It keeps the browser profile and home directory in Lambda's writable `/tmp` directory. It disables Chromium's own sandbox for Lambda compatibility. The image does not contain a license key.
+
+```sh
+docker build --platform linux/arm64 -f search_runtime/Dockerfile -t fortress-search:dev search_runtime
+docker build --platform linux/arm64 --provenance=false --sbom=false -f search_runtime/Dockerfile.lambda -t fortress-search:lambda search_runtime
+```
+
+Push `fortress-search:lambda` to Amazon ECR. Create an ARM64 Lambda function from that image. Start with 1,024 MB memory, the default 512 MB of `/tmp` storage, and a 120-second timeout. Supply `TILION_LICENSE_KEY` through Lambda environment configuration without putting it in the image or repository. Expose `POST /search` through a Function URL with `AWS_IAM` authentication or an authenticated API Gateway. See [the deployment steps and test limits](docs/SEARCH_RUNTIME.md#aws-lambda).
+
+A local AWS Lambda runtime emulator returned a public search result from this image under a 1 GiB memory limit and read-only image filesystem. The first invocation took 2.8 seconds. A warm invocation took 0.6 seconds. The emulator does not measure AWS production cold starts or Lambda scaling. Standard Lambda allocates one execution environment for each concurrent invocation. One hundred concurrent requests can therefore start about one hundred browser environments and use different outbound IPs.
+
 ## Build and run
 
 Build for your platform:

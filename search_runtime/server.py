@@ -32,6 +32,7 @@ async def start(app):
         "--disable-dev-shm-usage",
         f"--remote-debugging-port={PORT}",
         "--user-data-dir=/tmp/fortress-profile",
+        *(["--no-sandbox"] if os.environ.get("FORTRESS_NO_SANDBOX") == "1" else []),
         stderr=asyncio.subprocess.PIPE,
     )
     v1_fallback = False
@@ -171,4 +172,4 @@ app = web.Application(client_max_size=4096)
 app.cleanup_ctx.append(start)
 app.router.add_post("/search", search)
 app.router.add_get("/healthz", health)
-web.run_app(app, host="0.0.0.0", port=8080)
+web.run_app(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))
